@@ -14,11 +14,23 @@ TEXT _rt0_386_linux(SB),NOSPLIT,$8
 
 // When building with -buildmode=c-shared, this symbol is called when the shared
 // library is loaded.
-TEXT _rt0_386_linux_lib(SB),NOSPLIT,$12
-	MOVL	16(SP), AX
+TEXT _rt0_386_linux_lib(SB),NOSPLIT,$0
+	PUSHL	BP
+	MOVL	SP, BP
+	PUSHL	BX
+	PUSHL	SI
+	PUSHL	DI
+
+	MOVL	8(BP), AX
 	MOVL	AX, _rt0_386_linux_lib_argc<>(SB)
-	MOVL	20(SP), AX
+	MOVL	12(BP), AX
 	MOVL	AX, _rt0_386_linux_lib_argv<>(SB)
+
+	// Synchronous initialization.
+	MOVL	$runtime·libpreinit(SB), AX
+	CALL	AX
+
+	SUBL	$8, SP
 
 	// Create a new thread to do the runtime initialization.
 	MOVL	_cgo_sys_thread_create(SB), AX
@@ -28,15 +40,21 @@ TEXT _rt0_386_linux_lib(SB),NOSPLIT,$12
 	MOVL	BX, 0(SP)
 	MOVL	$0, 4(SP)
 	CALL	AX
-	RET
+	JMP	restore
 
 nocgo:
 	MOVL	$0x800000, 0(SP)                    // stacksize = 8192KB
 	MOVL	$_rt0_386_linux_lib_go(SB), AX
 	MOVL	AX, 4(SP)                           // fn
-	MOVL	$0, 8(SP)                           // fnarg
 	MOVL	$runtime·newosproc0(SB), AX
 	CALL	AX
+
+restore:
+	ADDL	$8, SP
+	POPL	DI
+	POPL	SI
+	POPL	BX
+	POPL	BP
 	RET
 
 TEXT _rt0_386_linux_lib_go(SB),NOSPLIT,$12
@@ -55,11 +73,3 @@ GLOBL _rt0_386_linux_lib_argv<>(SB),NOPTR, $4
 
 TEXT main(SB),NOSPLIT,$0
 	JMP	runtime·rt0_go(SB)
-
-TEXT _fallback_vdso(SB),NOSPLIT,$0
-	INT	$0x80
-	RET
-
-DATA	runtime·_vdso(SB)/4, $_fallback_vdso(SB)
-GLOBL	runtime·_vdso(SB), NOPTR, $4
-

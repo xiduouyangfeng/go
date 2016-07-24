@@ -1,4 +1,4 @@
-// Copyright 2015 The Go Authors.  All rights reserved.
+// Copyright 2015 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
@@ -13,13 +13,13 @@ func TestLineHist(t *testing.T) {
 	ctxt := new(Link)
 	ctxt.Hash = make(map[SymVer]*LSym)
 
-	Linklinehist(ctxt, 1, "a.c", 0)
-	Linklinehist(ctxt, 3, "a.h", 0)
-	Linklinehist(ctxt, 5, "<pop>", 0)
-	Linklinehist(ctxt, 7, "linedir", 2)
-	Linklinehist(ctxt, 9, "<pop>", 0)
-	Linklinehist(ctxt, 11, "b.c", 0)
-	Linklinehist(ctxt, 13, "<pop>", 0)
+	ctxt.LineHist.Push(1, "a.c")
+	ctxt.LineHist.Push(3, "a.h")
+	ctxt.LineHist.Pop(5)
+	ctxt.LineHist.Update(7, "linedir", 2)
+	ctxt.LineHist.Pop(9)
+	ctxt.LineHist.Push(11, "b.c")
+	ctxt.LineHist.Pop(13)
 
 	var expect = []string{
 		0:  "??:0",
@@ -40,9 +40,7 @@ func TestLineHist(t *testing.T) {
 	}
 
 	for i, want := range expect {
-		var f *LSym
-		var l int32
-		linkgetline(ctxt, int32(i), &f, &l)
+		f, l := linkgetline(ctxt, int32(i))
 		have := fmt.Sprintf("%s:%d", f.Name, l)
 		if have != want {
 			t.Errorf("linkgetline(%d) = %q, want %q", i, have, want)

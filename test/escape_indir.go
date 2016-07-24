@@ -1,6 +1,6 @@
 // errorcheck -0 -m -l
 
-// Copyright 2015 The Go Authors.  All rights reserved.
+// Copyright 2015 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
@@ -54,14 +54,14 @@ func constptr1() {
 	i := 0           // ERROR "moved to heap: i"
 	x := &ConstPtr{} // ERROR "&ConstPtr literal escapes to heap"
 	x.p = &i         // ERROR "&i escapes to heap"
-	sink = x // ERROR "x escapes to heap"
+	sink = x         // ERROR "x escapes to heap"
 }
 
 func constptr2() {
 	i := 0           // ERROR "moved to heap: i"
 	x := &ConstPtr{} // ERROR "&ConstPtr literal does not escape"
 	x.p = &i         // ERROR "&i escapes to heap"
-	sink = *x// ERROR "\*x escapes to heap"
+	sink = *x        // ERROR "\*x escapes to heap"
 }
 
 func constptr4() *ConstPtr {
@@ -78,7 +78,7 @@ func constptr5() *ConstPtr {
 }
 
 // BAD: p should not escape here
-func constptr6(p *ConstPtr) { // ERROR "leaking param: p"
+func constptr6(p *ConstPtr) { // ERROR "leaking param content: p"
 	p1 := &ConstPtr{} // ERROR "&ConstPtr literal does not escape"
 	*p1 = *p
 	_ = p1
@@ -150,4 +150,11 @@ func foo2() {
 	p := z.f
 	i := 0  // ERROR "moved to heap: i"
 	*p = &i // ERROR "&i escapes to heap"
+}
+
+var global *byte
+
+func f() {
+	var x byte    // ERROR "moved to heap: x"
+	global = &*&x // ERROR "&\(\*\(&x\)\) escapes to heap" "&x escapes to heap"
 }

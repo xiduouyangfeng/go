@@ -24,9 +24,9 @@
 #define	SYS_kill           37
 #define	SYS_getpid         20
 #define	SYS___pthread_kill 328
+#define	SYS_pthread_sigmask 329
 #define	SYS_setitimer      83
 #define	SYS___sysctl       202
-#define	SYS_sigprocmask    48
 #define	SYS_sigaction      46
 #define	SYS_sigreturn      184
 #define	SYS_select         93
@@ -81,7 +81,7 @@ TEXT runtime·read(SB),NOSPLIT,$0
 	RET
 
 TEXT runtime·exit(SB),NOSPLIT,$-8
-	MOVW	n+0(FP), R0
+	MOVW	code+0(FP), R0
 	MOVW	$SYS_exit, R16
 	SVC	$0x80
 	MOVD	$1234, R0
@@ -98,6 +98,11 @@ TEXT runtime·exit1(SB),NOSPLIT,$0
 	MOVD	R0, (R1)	// fail hard
 
 TEXT runtime·raise(SB),NOSPLIT,$0
+	// Ideally we'd send the signal to the current thread,
+	// not the whole process, but that's too hard on OS X.
+	JMP	runtime·raiseproc(SB)
+
+TEXT runtime·raiseproc(SB),NOSPLIT,$0
 	MOVW	$SYS_getpid, R16
 	SVC	$0x80
 	// arg 1 pid already in R0 from getpid
@@ -146,7 +151,7 @@ TEXT runtime·setitimer(SB),NOSPLIT,$0
 	SVC	$0x80
 	RET
 
-TEXT time·now(SB),NOSPLIT,$32-12
+TEXT time·now(SB),NOSPLIT,$40-12
 	MOVD	RSP, R0	// timeval
 	MOVD	R0, R9	// this is how dyld calls gettimeofday
 	MOVW	$0, R1	// zone
@@ -159,7 +164,7 @@ TEXT time·now(SB),NOSPLIT,$32-12
 	MOVW	R1, nsec+8(FP)
 	RET
 
-TEXT runtime·nanotime(SB),NOSPLIT,$32
+TEXT runtime·nanotime(SB),NOSPLIT,$40
 	MOVD	RSP, R0	// timeval
 	MOVD	R0, R9	// this is how dyld calls gettimeofday
 	MOVW	$0, R1	// zone
@@ -173,6 +178,14 @@ TEXT runtime·nanotime(SB),NOSPLIT,$32
 	ADD	R1, R0
 
 	MOVD	R0, ret+0(FP)
+	RET
+
+TEXT runtime·sigfwd(SB),NOSPLIT,$0-32
+	MOVW	sig+8(FP), R0
+	MOVD	info+16(FP), R1
+	MOVD	ctx+24(FP), R2
+	MOVD	fn+0(FP), R11
+	BL	(R11)
 	RET
 
 // Sigtramp's job is to call the actual signal handler.
@@ -232,7 +245,7 @@ cont:
 	MOVD	R1, 48(R6)
 
 	// switch stack and g
-	MOVD	R6, RSP	// sigtramp can not re-entrant, so no need to back up RSP.
+	MOVD	R6, RSP	// sigtramp is not re-entrant, so no need to back up RSP.
 	MOVD	R5, g
 
 	BL	(R0)
@@ -251,7 +264,7 @@ TEXT runtime·sigprocmask(SB),NOSPLIT,$0
 	MOVW	sig+0(FP), R0
 	MOVD	new+8(FP), R1
 	MOVD	old+16(FP), R2
-	MOVW	$SYS_sigprocmask, R16
+	MOVW	$SYS_pthread_sigmask, R16
 	SVC	$0x80
 	BCC	2(PC)
 	BL	notok<>(SB)
@@ -267,7 +280,7 @@ TEXT runtime·sigaction(SB),NOSPLIT,$0
 	BL	notok<>(SB)
 	RET
 
-TEXT runtime·usleep(SB),NOSPLIT,$12
+TEXT runtime·usleep(SB),NOSPLIT,$24
 	MOVW	usec+0(FP), R0
 	MOVW	R0, R1
 	MOVW	$1000000, R2
@@ -419,14 +432,14 @@ TEXT runtime·kqueue(SB),NOSPLIT,$0
 	MOVW	R0, ret+0(FP)
 	RET
 
-// int32 runtime·kevent(int kq, Kevent *changelist, int nchanges, Kevent *eventlist, int events, Timespec *timeout)
+// int32 runtime·kevent(int kq, Kevent *ch, int nch, Kevent *ev, int nev, Timespec *ts)
 TEXT runtime·kevent(SB),NOSPLIT,$0
 	MOVW	kq+0(FP), R0
-	MOVD	changelist+8(FP), R1
-	MOVW	nchanges+16(FP), R2
-	MOVD	eventlist+24(FP), R3
-	MOVW	nevents+32(FP), R4
-	MOVD	timeout+40(FP), R5
+	MOVD	ch+8(FP), R1
+	MOVW	nch+16(FP), R2
+	MOVD	ev+24(FP), R3
+	MOVW	nev+32(FP), R4
+	MOVD	ts+40(FP), R5
 	MOVW	$SYS_kevent, R16
 	SVC	$0x80
 	BCC	2(PC)

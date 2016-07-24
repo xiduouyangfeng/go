@@ -4,14 +4,21 @@
 
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 
-extern signed char DidInitRun();
-extern signed char DidMainRun();
-extern int32_t FromPkg();
-extern void CheckArgs();
+#include "p.h"
+#include "libgo.h"
+
+extern int install_handler();
+extern int check_handler();
 
 int main(void) {
 	int32_t res;
+
+	int r1 = install_handler();
+	if (r1!=0) {
+		return r1;
+	}
 
 	if (!DidInitRun()) {
 		fprintf(stderr, "ERROR: buildmode=c-archive init should run\n");
@@ -23,6 +30,11 @@ int main(void) {
 		return 2;
 	}
 
+	int r2 = check_handler();
+	if (r2!=0) {
+		return r2;
+	}
+
 	res = FromPkg();
 	if (res != 1024) {
 		fprintf(stderr, "ERROR: FromPkg()=%d, want 1024\n", res);
@@ -31,5 +43,6 @@ int main(void) {
 
 	CheckArgs();
 
+	fprintf(stderr, "PASS\n");
 	return 0;
 }

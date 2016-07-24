@@ -1,4 +1,4 @@
-// Copyright 2015 The Go Authors.  All rights reserved.
+// Copyright 2015 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
@@ -15,12 +15,9 @@
 // chance to resolve exceptions before the task handler, so we can generate
 // the panic and avoid lldb's SIGSEGV handler.
 //
-// If you want to debug a segfault under lldb, compile the standard library
-// with the build tag lldb:
-//
-//	go test -tags lldb -installsuffix lldb
+// The dist tool enables this by build flag when testing.
 
-// +build !lldb
+// +build lldb
 // +build darwin
 // +build arm arm64
 
@@ -185,6 +182,7 @@ darwin_arm_init_mach_exception_handler()
 	int ret;
 	pthread_t thr = NULL;
 	pthread_attr_t attr;
+	sigset_t ign, oset;
 
 	ret = mach_port_allocate(
 		mach_task_self(),
@@ -195,11 +193,18 @@ darwin_arm_init_mach_exception_handler()
 		abort();
 	}
 
+	// Block all signals to the exception handler thread
+	sigfillset(&ign);
+	pthread_sigmask(SIG_SETMASK, &ign, &oset);
+
 	// Start a thread to handle exceptions.
 	uintptr_t port_set = (uintptr_t)mach_exception_handler_port_set;
 	pthread_attr_init(&attr);
 	pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
 	ret = pthread_create(&thr, &attr, mach_exception_handler, (void*)port_set);
+
+	pthread_sigmask(SIG_SETMASK, &oset, nil);
+
 	if (ret) {
 		fprintf(stderr, "runtime/cgo: pthread_create failed: %d\n", ret);
 		abort();

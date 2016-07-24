@@ -155,10 +155,15 @@ timeloop:
 
 systime:
 	// Fall back to system call (usually first call in this thread).
-	MOVQ	SP, DI	// must be non-nil, unused
+	MOVQ	SP, DI
 	MOVQ	$0, SI
 	MOVL	$(0x2000000+116), AX
 	SYSCALL
+	CMPQ	AX, $0
+	JNE	inreg
+	MOVQ	0(SP), AX
+	MOVL	8(SP), DX
+inreg:
 	// sec is in AX, usec in DX
 	// return nsec in AX
 	IMULQ	$1000000000, AX
@@ -200,7 +205,7 @@ TEXT runtime·sigprocmask(SB),NOSPLIT,$0
 	MOVL	$0xf1, 0xf1  // crash
 	RET
 
-TEXT runtime·sigaction(SB),NOSPLIT,$0
+TEXT runtime·sigaction(SB),NOSPLIT,$0-24
 	MOVL	mode+0(FP), DI		// arg 1 sig
 	MOVQ	new+8(FP), SI		// arg 2 act
 	MOVQ	old+16(FP), DX		// arg 3 oact
@@ -212,48 +217,34 @@ TEXT runtime·sigaction(SB),NOSPLIT,$0
 	MOVL	$0xf1, 0xf1  // crash
 	RET
 
-TEXT runtime·sigtramp(SB),NOSPLIT,$64
-	get_tls(BX)
+TEXT runtime·sigfwd(SB),NOSPLIT,$0-32
+	MOVQ fn+0(FP),    AX
+	MOVL sig+8(FP),   DI
+	MOVQ info+16(FP), SI
+	MOVQ ctx+24(FP),  DX
+	MOVQ SP, BP
+	SUBQ $64, SP
+	ANDQ $~15, SP     // alignment for x86_64 ABI
+	CALL AX
+	MOVQ BP, SP
+	RET
 
-	MOVQ	R8, 32(SP)	// save ucontext
-	MOVQ	SI, 40(SP)	// save infostyle
-
-	// check that g exists
-	MOVQ	g(BX), R10
-	CMPQ	R10, $0
-	JNE	5(PC)
-	MOVL	DX, 0(SP)
-	MOVQ	$runtime·badsignal(SB), AX
-	CALL	AX
-	JMP 	ret
-
-	// save g
-	MOVQ	R10, 48(SP)
-
-	// g = m->gsignal
-	MOVQ	g_m(R10), BP
-	MOVQ	m_gsignal(BP), BP
-	MOVQ	BP, g(BX)
-
-	MOVL	DX, 0(SP)
-	MOVQ	CX, 8(SP)
-	MOVQ	R8, 16(SP)
-	MOVQ	R10, 24(SP)
-
-	CALL	DI
-
-	// restore g
-	get_tls(BX)
-	MOVQ	48(SP), R10
-	MOVQ	R10, g(BX)
-
-ret:
-	// call sigreturn
-	MOVL	$(0x2000000+184), AX	// sigreturn(ucontext, infostyle)
-	MOVQ	32(SP), DI	// saved ucontext
-	MOVQ	40(SP), SI	// saved infostyle
+TEXT runtime·sigreturn(SB),NOSPLIT,$0-12
+	MOVQ ctx+0(FP),        DI
+	MOVL infostyle+8(FP),  SI
+	MOVL $(0x2000000+184), AX
 	SYSCALL
-	INT $3	// not reached
+	INT $3 // not reached
+
+TEXT runtime·sigtramp(SB),NOSPLIT,$32
+	MOVQ DI,  0(SP) // fn
+	MOVL SI,  8(SP) // infostyle
+	MOVL DX, 12(SP) // sig
+	MOVQ CX, 16(SP) // info
+	MOVQ R8, 24(SP) // ctx
+	MOVQ $runtime·sigtrampgo(SB), AX
+	CALL AX
+	INT $3 // not reached (see issue 16453)
 
 TEXT runtime·mmap(SB),NOSPLIT,$0
 	MOVQ	addr+0(FP), DI		// arg 1 addr
@@ -277,8 +268,8 @@ TEXT runtime·munmap(SB),NOSPLIT,$0
 	RET
 
 TEXT runtime·sigaltstack(SB),NOSPLIT,$0
-	MOVQ	new+8(SP), DI
-	MOVQ	old+16(SP), SI
+	MOVQ	new+0(FP), DI
+	MOVQ	old+8(FP), SI
 	MOVQ	$(0x2000000+53), AX
 	SYSCALL
 	JCC	2(PC)
@@ -308,9 +299,9 @@ TEXT runtime·bsdthread_create(SB),NOSPLIT,$0
 	// Set up arguments to bsdthread_create system call.
 	// The ones in quotes pass through to the thread callback
 	// uninterpreted, so we can put whatever we want there.
-	MOVQ	fn+24(SP),   DI
-	MOVQ	arg+16(SP),  SI
-	MOVQ	stk+8(SP),   DX
+	MOVQ	fn+16(FP),   DI
+	MOVQ	arg+8(FP),  SI
+	MOVQ	stk+0(FP),   DX
 	MOVQ	$0x01000000, R8  // flags = PTHREAD_START_CUSTOM
 	MOVQ	$0,          R9  // paranoia
 	MOVQ	$0,          R10 // paranoia, "pthread"
@@ -318,10 +309,10 @@ TEXT runtime·bsdthread_create(SB),NOSPLIT,$0
 	SYSCALL
 	JCC 4(PC)
 	NEGQ	AX
-	MOVL	AX, ret+32(FP)
+	MOVL	AX, ret+24(FP)
 	RET
 	MOVL	$0, AX
-	MOVL	AX, ret+32(FP)
+	MOVL	AX, ret+24(FP)
 	RET
 
 // The thread that bsdthread_create creates starts executing here,

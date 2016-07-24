@@ -32,7 +32,9 @@
 #define SYS_getrlimit		163
 #define SYS_madvise		233
 #define SYS_mincore		232
+#define SYS_getpid		172
 #define SYS_gettid		178
+#define SYS_kill		129
 #define SYS_tkill		130
 #define SYS_futex		98
 #define SYS_sched_getaffinity	123
@@ -41,6 +43,9 @@
 #define SYS_epoll_ctl		21
 #define SYS_epoll_pwait		22
 #define SYS_clock_gettime	113
+#define SYS_faccessat		48
+#define SYS_socket		198
+#define SYS_connect		203
 
 TEXT runtime·exit(SB),NOSPLIT,$-8-4
 	MOVW	code+0(FP), R0
@@ -72,6 +77,7 @@ TEXT runtime·closefd(SB),NOSPLIT,$-8-12
 	MOVW	fd+0(FP), R0
 	MOVD	$SYS_close, R8
 	SVC
+	CMN	$4095, R0
 	BCC	done
 	MOVW	$-1, R0
 done:
@@ -84,6 +90,7 @@ TEXT runtime·write(SB),NOSPLIT,$-8-28
 	MOVW	n+16(FP), R2
 	MOVD	$SYS_write, R8
 	SVC
+	CMN	$4095, R0
 	BCC	done
 	MOVW	$-1, R0
 done:
@@ -96,6 +103,7 @@ TEXT runtime·read(SB),NOSPLIT,$-8-28
 	MOVW	n+16(FP), R2
 	MOVD	$SYS_read, R8
 	SVC
+	CMN	$4095, R0
 	BCC	done
 	MOVW	$-1, R0
 done:
@@ -110,7 +118,7 @@ TEXT runtime·getrlimit(SB),NOSPLIT,$-8-20
 	MOVW	R0, ret+16(FP)
 	RET
 
-TEXT runtime·usleep(SB),NOSPLIT,$16-4
+TEXT runtime·usleep(SB),NOSPLIT,$24-4
 	MOVWU	usec+0(FP), R3
 	MOVD	R3, R5
 	MOVW	$1000000, R4
@@ -133,12 +141,27 @@ TEXT runtime·usleep(SB),NOSPLIT,$16-4
 	SVC
 	RET
 
+TEXT runtime·gettid(SB),NOSPLIT,$0-4
+	MOVD	$SYS_gettid, R8
+	SVC
+	MOVW	R0, ret+0(FP)
+	RET
+
 TEXT runtime·raise(SB),NOSPLIT,$-8
 	MOVD	$SYS_gettid, R8
 	SVC
 	MOVW	R0, R0	// arg 1 tid
 	MOVW	sig+0(FP), R1	// arg 2
 	MOVD	$SYS_tkill, R8
+	SVC
+	RET
+
+TEXT runtime·raiseproc(SB),NOSPLIT,$-8
+	MOVD	$SYS_getpid, R8
+	SVC
+	MOVW	R0, R0		// arg 1 pid
+	MOVW	sig+0(FP), R1	// arg 2
+	MOVD	$SYS_kill, R8
 	SVC
 	RET
 
@@ -160,7 +183,7 @@ TEXT runtime·mincore(SB),NOSPLIT,$-8-28
 	RET
 
 // func now() (sec int64, nsec int32)
-TEXT time·now(SB),NOSPLIT,$16-12
+TEXT time·now(SB),NOSPLIT,$24-12
 	MOVD	RSP, R0
 	MOVD	$0, R1
 	MOVD	$SYS_gettimeofday, R8
@@ -173,7 +196,7 @@ TEXT time·now(SB),NOSPLIT,$16-12
 	MOVW	R5, nsec+8(FP)
 	RET
 
-TEXT runtime·nanotime(SB),NOSPLIT,$16-8
+TEXT runtime·nanotime(SB),NOSPLIT,$24-8
 	MOVW	$1, R0 // CLOCK_MONOTONIC
 	MOVD	RSP, R1
 	MOVD	$SYS_clock_gettime, R8
@@ -212,7 +235,15 @@ TEXT runtime·rt_sigaction(SB),NOSPLIT,$-8-36
 	MOVW	R0, ret+32(FP)
 	RET
 
-TEXT runtime·sigtramp(SB),NOSPLIT,$64
+TEXT runtime·sigfwd(SB),NOSPLIT,$0-32
+	MOVW	sig+8(FP), R0
+	MOVD	info+16(FP), R1
+	MOVD	ctx+24(FP), R2
+	MOVD	fn+0(FP), R11
+	BL	(R11)
+	RET
+
+TEXT runtime·sigtramp(SB),NOSPLIT,$24
 	// this might be called in external code context,
 	// where g is not set.
 	// first save R0, because runtime·load_g will clobber it
@@ -222,32 +253,15 @@ TEXT runtime·sigtramp(SB),NOSPLIT,$64
 	BEQ	2(PC)
 	BL	runtime·load_g(SB)
 
-	// check that g exists
-	CMP	g, ZR
-	BNE	ok
-	MOVD	$runtime·badsignal(SB), R0
+	MOVD	R1, 16(RSP)
+	MOVD	R2, 24(RSP)
+	MOVD	$runtime·sigtrampgo(SB), R0
 	BL	(R0)
 	RET
 
-ok:
-	// save g
-	MOVD	g, 40(RSP)
-	MOVD	g, R6
-
-	// g = m->gsignal
-	MOVD	g_m(g), R7
-	MOVD	m_gsignal(R7), g
-
-	// R0 is already saved above
-	MOVD	R1, 16(RSP)
-	MOVD	R2, 24(RSP)
-	MOVD	R6, 32(RSP)
-
-	BL	runtime·sighandler(SB)
-
-	// restore g
-	MOVD	40(RSP), g
-	RET
+TEXT runtime·cgoSigtramp(SB),NOSPLIT,$0
+	MOVD	$runtime·sigtramp(SB), R3
+	B	(R3)
 
 TEXT runtime·mmap(SB),NOSPLIT,$-8
 	MOVD	addr+0(FP), R0
@@ -259,6 +273,9 @@ TEXT runtime·mmap(SB),NOSPLIT,$-8
 
 	MOVD	$SYS_mmap, R8
 	SVC
+	CMN	$4095, R0
+	BCC	2(PC)
+	NEG	R0,R0
 	MOVD	R0, ret+32(FP)
 	RET
 
@@ -330,14 +347,19 @@ child:
 	MOVD	$0, R0
 	MOVD	R0, (R0)	// crash
 
-	// Initialize m->procid to Linux tid
 good:
+	// Initialize m->procid to Linux tid
 	MOVD	$SYS_gettid, R8
 	SVC
 
-	MOVD	-24(RSP), R12
-	MOVD	-16(RSP), R11
-	MOVD	-8(RSP), R10
+	MOVD	-24(RSP), R12     // fn
+	MOVD	-16(RSP), R11     // g
+	MOVD	-8(RSP), R10      // m
+
+	CMP	$0, R10
+	BEQ	nog
+	CMP	$0, R11
+	BEQ	nog
 
 	MOVD	R0, m_procid(R10)
 
@@ -348,23 +370,17 @@ good:
 	MOVD	R11, g
 	//CALL	runtime·stackcheck(SB)
 
+nog:
 	// Call fn
 	MOVD	R12, R0
 	BL	(R0)
 
-	// It shouldn't return.	 If it does, exit
+	// It shouldn't return.	 If it does, exit that thread.
 	MOVW	$111, R0
 again:
-	MOVD	$SYS_exit_group, R8
+	MOVD	$SYS_exit, R8
 	SVC
 	B	again	// keep exiting
-
-// int32 clone0(int32 flags, void *stack, void* fn, void* fnarg);
-TEXT runtime·clone0(SB),NOSPLIT,$0
-	// TODO(spetrovic): Implement this method.
-	MOVW	$-1, R0
-	MOVW	R0, ret+32(FP)
-	RET
 
 TEXT runtime·sigaltstack(SB),NOSPLIT,$-8
 	MOVD	new+0(FP), R0
@@ -438,4 +454,34 @@ TEXT runtime·closeonexec(SB),NOSPLIT,$-8
 	MOVD	$1, R2	// FD_CLOEXEC
 	MOVD	$SYS_fcntl, R8
 	SVC
+	RET
+
+// int access(const char *name, int mode)
+TEXT runtime·access(SB),NOSPLIT,$0-20
+	MOVD	$AT_FDCWD, R0
+	MOVD	name+0(FP), R1
+	MOVW	mode+8(FP), R2
+	MOVD	$SYS_faccessat, R8
+	SVC
+	MOVW	R0, ret+16(FP)
+	RET
+
+// int connect(int fd, const struct sockaddr *addr, socklen_t len)
+TEXT runtime·connect(SB),NOSPLIT,$0-28
+	MOVW	fd+0(FP), R0
+	MOVD	addr+8(FP), R1
+	MOVW	len+16(FP), R2
+	MOVD	$SYS_connect, R8
+	SVC
+	MOVW	R0, ret+24(FP)
+	RET
+
+// int socket(int domain, int typ, int prot)
+TEXT runtime·socket(SB),NOSPLIT,$0-20
+	MOVW	domain+0(FP), R0
+	MOVW	typ+4(FP), R1
+	MOVW	prot+8(FP), R2
+	MOVD	$SYS_socket, R8
+	SVC
+	MOVW	R0, ret+16(FP)
 	RET
